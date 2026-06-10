@@ -58,62 +58,155 @@ openconfig-automation/
 │   └── playbooks/deploy_interfaces.yml
 ├── containerlab/
 │   └── topology.clab.yml       # virtual SR Linux devices
+├── lima/
+│   ├── containerlab.yaml       # Lima VM definition (for macOS, see step 4)
+│   └── README.md
 ├── .env.example
 └── .gitignore
 ```
 
 ## Setup Order
 
-### 1. Bring up NetBox
+### 1. Create your `.env` file
 
-This compose file expects the official `netbox-docker` project's compose file
-to be merged in (or run as a separate stack on the same Docker network — see
-`docker-compose.yml` comments for both options).
+Copy the template and fill in real values:
 
 ```bash
+cp .env.example .env
+```
+
+`.env` lives in the **root of this project** (next to `docker-compose.yml`)
+and is gitignored — never commit it. Docker Compose reads it automatically
+for the `translator` service. You'll fill in `NETBOX_TOKEN` after step 2.
+
+### 2. Bring up NetBox
+
+This project does not vendor NetBox itself — clone the official
+`netbox-docker` project as a **separate, sibling folder** (not inside this
+repo):
+
+```bash
+cd ..
 git clone -b release https://github.com/netbox-community/netbox-docker.git
+cd netbox-docker
 ```
 
-### 2. Compile the OpenConfig -> Pyangbind bindings (one-time)
-
-Run this once on your machine, or as part of the translator image build:
+By default, `netbox-docker` does **not** expose NetBox on a host port — it
+only listens inside the Docker network. Add an override file to map it to
+`localhost:8000`:
 
 ```bash
-cd translator
-./build_bindings.sh
+cat > docker-compose.override.yml << 'EOF'
+services:
+  netbox:
+    ports:
+      - "8000:8080"
+EOF
+
+docker compose up -d
 ```
 
-This clones `openconfig/public` from GitHub and compiles the interfaces,
-VLAN, and routing-policy YANG models into `oc_bindings/`. The output is large
-and machine-generated, so it's gitignored — re-run the script whenever you
-need it (this is the same "Phase 1: Build Time" step described in the design
-discussion).
+Wait for the `netbox` service to report `healthy`:
 
-### 3. Stand up the virtual network with containerlab
+```bash
+docker compose ps
+```
 
-containerlab needs to talk to the host Docker daemon directly (it's not
-typically nested inside another container). Install it on your host:
+Create a superuser account to log in with (recent `netbox-docker` releases no
+longer ship a default `admin`/`admin` user — `admin`/`admin` will not work):
+
+```bash
+docker compose exec netbox /opt/netbox/netbox/manage.py createsuperuser
+```
+
+Follow the prompts to set a username, email, and password.
+
+Then open **http://localhost:8000** in your browser and log in with the
+credentials you just created.
+
+Once logged in, generate an API token: top-right profile menu -> **API
+Tokens** -> **Add a token**. Copy this 40-character hex string into
+`NETBOX_TOKEN` in your `.env` file (back in the `openconfig-automation`
+folder), and set `NETBOX_URL=http://netbox:8080` (the internal Docker
+network address the translator container will use).
+
+### 3. Compile the OpenConfig -> Pyangbind bindings (one-time)
+
+Build the translator image first so its Python environment (with `pyang` /
+`pyangbind` from `requirements.txt`) is available, then run the build script
+inside a one-off container — this writes `oc_bindings/` to your host
+filesystem via the volume mount, no local Python install needed:
+
+```bash
+cd openconfig-automation
+docker compose build translator
+docker compose run --rm translator ./build_bindings.sh
+```
+
+This clones `openconfig/public` from GitHub and compiles the interfaces and
+VLAN YANG models into `translator/oc_bindings/`. The output is large and
+machine-generated, so it's gitignored — re-run this whenever you need to pick
+up new OpenConfig models or updates (this is the same "Phase 1: Build Time"
+step described in the original design discussion).
+
+> **Running it directly on your Mac instead?** Make sure the script is
+> executable (`chmod +x build_bindings.sh`), use `python3` (macOS has no
+> `python` by default), and install dependencies into a venv first:
+> ```bash
+> python3 -m venv venv && source venv/bin/activate
+> pip install -r requirements.txt
+> ./build_bindings.sh
+> ```
+
+### 4. Stand up the virtual network with containerlab
+
+containerlab needs to talk to a Linux Docker host directly and Nokia SR
+Linux images are amd64-only — neither works natively on macOS.
+
+**On Linux:** install containerlab directly on the host and skip to the
+`containerlab deploy` step below.
 
 ```bash
 bash -c "$(curl -sL https://get.containerlab.dev)"
-cd containerlab
+```
+
+**On macOS (especially Apple Silicon):** use the included Lima VM, which
+gives you a small Linux box with Docker + containerlab pre-installed. See
+[`lima/README.md`](lima/README.md) for full details. Quick version:
+
+```bash
+brew install lima
+# edit lima/containerlab.yaml -> set mounts.location to this project's path
+limactl start --name=clab lima/containerlab.yaml
+limactl shell clab
+```
+
+Then, from inside the Linux host (native Linux shell, or `limactl shell clab`
+on macOS):
+
+```bash
+cd containerlab   # or /workspace/containerlab inside the Lima VM
 sudo containerlab deploy -t topology.clab.yml
 ```
 
-This brings up two Nokia SR Linux nodes with NETCONF (port 830) exposed.
+This brings up two Nokia SR Linux nodes with NETCONF (port 830) exposed. If
+running via Lima, the management IPs (172.20.20.x) are only reachable inside
+the VM — either run Ansible inside the VM too, or use the forwarded NETCONF
+ports (50001/50002 -> `127.0.0.1`) and update `ansible/inventory.yml`
+accordingly.
 
-### 4. Bring up NetBox + the translator app
+### 5. Bring up the translator app
 
 ```bash
 docker compose up -d
 ```
 
-### 5. Populate NetBox
+### 6. Populate NetBox
 
 Create your devices, interfaces, and IPs in NetBox (manually via the UI for
 now, or via `pynetbox` scripts later).
 
-### 6. Run the translator
+### 7. Run the translator
 
 ```bash
 docker compose exec translator python main.py --device spine-01
@@ -125,7 +218,7 @@ it against `oc_bindings`, and writes:
 - `output/spine-01.json` — the validated OpenConfig payload
 - `ansible/host_vars/spine-01.yml` — Ansible variables derived from the payload
 
-### 7. Deploy with Ansible over NETCONF
+### 8. Deploy with Ansible over NETCONF
 
 ```bash
 cd ansible
@@ -142,6 +235,45 @@ ansible-playbook playbooks/deploy_interfaces.yml -l spine-01
 | `build_bindings.sh` | `oc_bindings/` (generated) |
 | Ansible playbooks/inventory (no secrets) | Ansible vault password files |
 | `containerlab/topology.clab.yml` | containerlab lab state / certs |
+| `lima/containerlab.yaml`, `lima/README.md` | the Lima VM itself, `netbox-docker/` clone |
+
+> Note: the `netbox-docker` repo is cloned as a **sibling folder** next to
+> `openconfig-automation/`, not nested inside it — it's a separate project
+> with its own git history and is not part of this repo.
+
+## Troubleshooting
+
+- **`docker compose ps` shows nothing, but Docker Desktop shows containers
+  running**: you're likely not in the right directory. `docker compose ps`
+  only shows the project tied to the `docker-compose.yml` in your current
+  working directory — `cd` into `netbox-docker/` (or wherever the relevant
+  compose file lives) first, or use `docker ps` to see everything regardless
+  of project.
+
+- **NetBox UI doesn't load at `http://localhost:8000`**: check that
+  `docker-compose.override.yml` exists in `netbox-docker/` with the `8000:8080`
+  port mapping (see step 2) — `netbox-docker` doesn't expose a host port by
+  default.
+
+- **`./build_bindings.sh: Permission denied`**: run `chmod +x
+  build_bindings.sh` first (executable bits don't survive zip/download), or
+  invoke it as `bash build_bindings.sh`.
+
+- **`./build_bindings.sh: line 37: python: command not found`** (macOS): the
+  script needs `python3`. Either run it inside the translator container (step
+  3, recommended) or edit the script to use `python3` and install
+  dependencies into a venv.
+
+- **`ModuleNotFoundError: No module named 'pyangbind'`**: `pyang`/`pyangbind`
+  aren't installed in whatever Python `build_bindings.sh` is using. Run it via
+  `docker compose run --rm translator ./build_bindings.sh` (step 3) so it uses
+  the translator image's environment, which already has these from
+  `requirements.txt`.
+
+- **`containerlab`: "No prebuilt binary for darwin-arm64"**: containerlab has
+  no native macOS build. Use the Lima VM in `lima/` (step 4).
+
+
 
 ## Roadmap / Suggested Order of Automation
 
