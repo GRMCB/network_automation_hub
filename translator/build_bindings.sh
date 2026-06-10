@@ -34,7 +34,7 @@ fi
 
 # Locate the pyangbind plugin directory shipped with the pyangbind package
 export PYBINDPLUGIN
-PYBINDPLUGIN=$(python -c "import pyangbind, os; print(os.path.dirname(pyangbind.__file__) + '/plugin')")
+PYBINDPLUGIN=$(python3 -c "import pyangbind, os; print(os.path.dirname(pyangbind.__file__) + '/plugin')")
 echo ">> Using pyangbind plugin dir: $PYBINDPLUGIN"
 
 MODELS_ROOT="$MODELS_DIR/release/models"
