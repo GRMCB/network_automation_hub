@@ -1,0 +1,24 @@
+# inventory.yml
+#
+# Hosts here correspond to the nodes defined in containerlab/topology.clab.yml.
+# By default containerlab maps each node's NETCONF port (830) to a unique
+# port on the host (e.g. 50001, 50002, ...) - check `containerlab inspect`
+# for the actual mapped ports and update ansible_port accordingly, or use
+# the container's management IP directly if Ansible runs on the same Docker
+# network.
+
+all:
+  children:
+    network_devices:
+      hosts:
+        spine-01:
+          ansible_host: 172.20.20.11
+          ansible_port: 830
+        spine-02:
+          ansible_host: 172.20.20.12
+          ansible_port: 830
+      vars:
+        ansible_connection: ansible.netcommon.netconf
+        ansible_network_os: nokia.srlinux.srlinux
+        ansible_user: admin
+        ansible_password: "{{ lookup('env', 'SRL_PASSWORD') | default('NokiaSrl1!', true) }}"

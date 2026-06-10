@@ -1,0 +1,14 @@
+# NetBox API client (ORM-like access to the SoT)
+pynetbox==7.4.1
+
+# YANG validator + Python binding generator
+pyang==2.6.1
+pyangbind==0.8.6
+
+# Web framework for the NetBox webhook receiver
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+
+# Config / env handling
+python-dotenv==1.0.1
+PyYAML==6.0.2

@@ -1,0 +1,45 @@
+# topology.clab.yml
+#
+# Defines two free, NETCONF/OpenConfig-native virtual routers using Nokia
+# SR Linux (ghcr.io/nokia/srlinux). containerlab wires them together with a
+# point-to-point link and exposes each node's NETCONF port (830) to the host.
+#
+# containerlab runs against the HOST's Docker daemon (it manages container
+# networking namespaces directly), so install it on your Mac/host rather
+# than nesting it inside the translator/NetBox containers:
+#
+#   bash -c "$(curl -sL https://get.containerlab.dev)"
+#
+# Deploy:
+#   sudo containerlab deploy -t topology.clab.yml
+#
+# Inspect mapped ports / IPs:
+#   sudo containerlab inspect -t topology.clab.yml
+#
+# Destroy:
+#   sudo containerlab destroy -t topology.clab.yml
+
+name: oc-lab
+
+topology:
+  nodes:
+    spine-01:
+      kind: nokia_srlinux
+      image: ghcr.io/nokia/srlinux:latest
+      mgmt-ipv4: 172.20.20.11
+      ports:
+        - "50001:830"   # NETCONF, mapped to host port 50001
+
+    spine-02:
+      kind: nokia_srlinux
+      image: ghcr.io/nokia/srlinux:latest
+      mgmt-ipv4: 172.20.20.12
+      ports:
+        - "50002:830"   # NETCONF, mapped to host port 50002
+
+  links:
+    - endpoints: ["spine-01:e1-1", "spine-02:e1-1"]
+
+mgmt:
+  network: oc-lab-mgmt
+  ipv4-subnet: 172.20.20.0/24

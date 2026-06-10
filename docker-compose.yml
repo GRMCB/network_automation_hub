@@ -1,0 +1,74 @@
+# docker-compose.yml
+#
+# This compose file defines the translator app and connects it to NetBox.
+#
+# OPTION A (recommended): run the official netbox-docker stack as its own
+# project, then attach this compose file to its network:
+#
+#   git clone -b release https://github.com/netbox-community/netbox-docker.git
+#   cd netbox-docker && docker compose up -d
+#   cd ../openconfig-automation && docker compose up -d
+#
+# This file's "translator" service joins the "netbox-docker_default" network
+# so it can reach NetBox at http://netbox:8080.
+#
+# OPTION B: uncomment the "netbox" + "netbox-postgres" + "netbox-redis"
+# services below for an all-in-one stack (slimmed down vs. the official repo
+# - fine for a quick lab, but the official repo is better maintained).
+
+version: "3.8"
+
+networks:
+  default:
+    name: netbox-docker_default
+    external: true
+
+services:
+  translator:
+    build:
+      context: ./translator
+    container_name: translator
+    env_file:
+      - .env
+    volumes:
+      - ./translator:/app
+      - ./output:/app/output
+      - ./ansible/host_vars:/app/ansible_host_vars
+    ports:
+      - "8080:8080"   # FastAPI webhook receiver
+    command: ["python", "main.py", "serve"]
+    depends_on: []
+
+# ---------------------------------------------------------------------------
+# OPTION B: standalone NetBox stack (uncomment if not using netbox-docker)
+# ---------------------------------------------------------------------------
+#   netbox-postgres:
+#     image: postgres:16-alpine
+#     environment:
+#       POSTGRES_DB: netbox
+#       POSTGRES_USER: netbox
+#       POSTGRES_PASSWORD: netbox
+#     volumes:
+#       - netbox-postgres-data:/var/lib/postgresql/data
+#
+#   netbox-redis:
+#     image: redis:7-alpine
+#
+#   netbox:
+#     image: netboxcommunity/netbox:latest
+#     depends_on:
+#       - netbox-postgres
+#       - netbox-redis
+#     environment:
+#       DB_HOST: netbox-postgres
+#       DB_NAME: netbox
+#       DB_USER: netbox
+#       DB_PASSWORD: netbox
+#       REDIS_HOST: netbox-redis
+#       SECRET_KEY: "change-me-to-a-random-50-char-string"
+#       SUPERUSER_API_TOKEN: "0123456789abcdef0123456789abcdef01234567"
+#     ports:
+#       - "8000:8080"
+#
+# volumes:
+#   netbox-postgres-data:
